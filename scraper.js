@@ -1,18 +1,29 @@
+const Xray = require('x-ray');              // replace osmosis with x-ray
+const json2csv = require('json2csv');       // json2csv node package
+const fs = require('fs');                   // file system node package
 
-const osmosis = require('osmosis');           // scraper node package
-const json2csv = require('json2csv');         // json2csv node package
-const fs = require('fs');                     // file system node package
-
-let shirtsArray = [];
-
-let fields = ['Title', 'Price', 'ImageURL', 'URL', 'Time'];
+var xray = new Xray();
 
 function createDirectory(directory) {
-    try {
-        fs.statSync(directory);
-    } catch(e) {
-        fs.mkdirSync(directory);
+  // from http://stackoverflow.com/questions/21194934/node-how-to-create-a-directory-if-doesnt-exist/21196961#21196961
+  function ensureExists(path, mask, cb) {
+    if (typeof mask == 'function') {    // allow the `mask` parameter to be optional
+      cb = mask;                      
+      mask = 0777;                          // full permission for user, group, other. 
+    };
+    fs.mkdir(path, mask, function(err) {
+    if (err) {
+      if (err.code == 'EEXIST') cb(null);   // ignore the error if the folder already exists
+        else cb(err);                       // something else went wrong
+      } else cb(null);                      // successfully created folder
     }
+    );
+  };
+
+  ensureExists(__dirname + directory, 0744, function(err) {
+    if (err) {console.log(err) }  // handle folder creation error
+      else { }                    // we're all good
+    });
 };
 
 function writeErrorLog(comment) {
@@ -23,49 +34,44 @@ function writeErrorLog(comment) {
     });
 };
 
-function toCSV() {
-    // Get and format date for file
-    let today = new Date();
-    let todayFormatted = today.getFullYear() + '-' + (today.getMonth()+1) + '-' + today.getDate();
+function toCSV(shirts) {
+  // Get and format date for file
+  let fields = ['Title', 'Price', 'ImageURL', 'URL', 'Time'];
+  let today = new Date();
+  let todayFormatted = today.getFullYear() + '-' + (today.getMonth()+1) + '-' + today.getDate();
 
-    let csv = json2csv({ data: shirtsArray, fields: fields });
-
-    if(shirtsArray.length !== 0) {
-        createDirectory("./data");
-        fs.writeFile('data/' + todayFormatted + '.csv', csv, function (err) {
-            if (err) throw err;
-            console.log('file saved');
-        });
-    } else writeErrorLog('Unable to scrape shirts4mike at this time. Please try again in a few moments\n');
+  for (let i = 0; i<shirts.length; i++) {     // update the Time with real data
+      shirts[i]['Time'] = today.toString();
+  }
+  let csv = json2csv({ data: shirts, fields: fields });     // use the fields array to put the csv extract into the correct order.
+  if(shirts.length !== 0) {                                 // not sure this check is needed as x-ray has real error handling while osmosis did not.
+    fs.writeFile('data/' + todayFormatted + '.csv', csv, function (err) {
+       if (err) throw err;
+          console.log('file saved');
+    });
+  } else writeErrorLog('Unable to scrape shirts4mike at this time. Please try again in a few moments\n');
 };
-function getFullURL(ImageURL) {
-    let position = ImageURL.indexOf(".jpg");
-    let shirtNum = ImageURL.substr(position - 3, 3);
-    return 'http://www.shirts4mike.com/shirt.php?id=' + shirtNum;
-}
-function scrapeContent() {
-    osmosis
-        .get('http://www.shirts4mike.com/shirts.php')       // Connecting to main site
-        .set({'URL': '.products a@href'})                   // Setting URL variable in Object however, only grabing the first occurance.
-        .follow('.products a@href')                         // Iterating through the shirt links
-        .set({
-            'Title':'.shirt-picture @alt',
-            'Price': '.price',
-            'ImageURL': 'img @src',
-            })                                              // Setting More variables
-        // 
-        .data(function(shirt) {
-            shirt.URL = getFullURL(shirt.ImageURL);
-            shirt.ImageURL = 'http://www.shirts4mike.com/' + shirt.ImageURL;
-            //shirt.URL = 'http://www.shirts4mike.com/' + shirt.URL;
-            let nowStamp = new Date();
-            shirt.Time = nowStamp.toString();
-            console.dir(osmosis.window);
-            shirtsArray.push(shirt);
-            })
-        .done(toCSV)
-        .error("Unable to establish a connection with shirts4mike site\n");
 
+function scrapeContent() {
+  createDirectory("/data");   // make my data directory if it does not exist
+
+  xray('http://www.shirts4mike.com/shirts.php', '.products li', 
+    [{
+      Title:'img @alt',
+      Price: xray("a@href", '.price'),
+      ImageURL: 'img @src',
+      URL: 'a@href',
+      Time: ""          
+    }]
+  )
+  (function(err, str) {
+    if (err) {
+      writeErrorLog("Connection error, make sure you are connected to the internet and try again in a few moments\n") 
+    } else {
+      toCSV(str);
+    }
+  });
+  
 };
 
 scrapeContent();
